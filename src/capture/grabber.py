@@ -1,7 +1,6 @@
 """Frame grabber using dxcam for screen capture."""
 
 import dxcam
-import numpy as np
 
 
 class FrameGrabber:

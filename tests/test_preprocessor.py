@@ -1,7 +1,6 @@
 """Unit tests for frame preprocessor."""
 
 import numpy as np
-import pytest
 from src.capture.preprocessor import preprocess_frame
 
 

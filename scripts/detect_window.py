@@ -2,6 +2,7 @@
 """Utility to enumerate and find windows, particularly for game detection."""
 
 import argparse
+import time
 import win32gui
 
 
@@ -70,5 +71,11 @@ if __name__ == '__main__':
         help='Search term to filter windows by title',
     )
     args = parser.parse_args()
+
+    print("Detecting windows in 5 seconds... Open the game window now!")
+    for i in range(5, 0, -1):
+        print(f"{i}...", end=' ', flush=True)
+        time.sleep(1)
+    print("\nDetecting...\n")
 
     detect_windows(search_term=args.search)

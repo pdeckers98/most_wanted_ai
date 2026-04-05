@@ -149,7 +149,7 @@ class ScreenCapture:
 
         signal.signal(signal.SIGINT, signal_handler)
 
-        print(f"Screen Capture Ready")
+        print("Screen Capture Ready")
         print(f"Hotkey: {self.config.hotkey} to start/stop recording")
         print(f"Resolution: {self.config.source_width}x{self.config.source_height}")
         print(f" → {self.config.output_width}x{self.config.output_height}")

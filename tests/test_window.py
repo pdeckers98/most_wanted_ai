@@ -1,7 +1,7 @@
 """Unit tests for window detection utilities."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from src.utils.window import (
     find_window_by_title,
     get_client_region,
