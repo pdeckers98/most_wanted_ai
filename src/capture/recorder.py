@@ -62,7 +62,6 @@ class ScreenCapture:
 
     def _start_recording(self):
         """Start a new recording session."""
-        self._recording.set()
         self._frame_count = 0
         self._session_start = datetime.now()
 
@@ -70,11 +69,14 @@ class ScreenCapture:
         session_name = self._session_start.strftime("session_%Y%m%d_%H%M%S")
         session_dir = self.config.output_dir / session_name
 
-        # Initialize components
+        # Initialize components BEFORE setting recording flag to avoid race condition
         self._grabber = FrameGrabber(self._region, self.config.target_fps)
         self._writer = FrameWriter(session_dir)
 
         self._grabber.start()
+
+        # Now safe to set flag
+        self._recording.set()
 
         # Audio feedback
         if self.config.beep_on_start:
@@ -130,7 +132,7 @@ class ScreenCapture:
             # Periodic status update
             now = time.time()
             if now - last_status_time > 5.0:
-                elapsed = now - time.time()
+                elapsed = (datetime.now() - self._session_start).total_seconds()
                 fps = self._frame_count / elapsed if elapsed > 0 else 0
                 print(f"Frames: {self._frame_count} ({fps:.1f} fps)")
                 last_status_time = now

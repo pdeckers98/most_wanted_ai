@@ -52,7 +52,7 @@ def get_client_region(hwnd):
         hwnd: Window handle to query.
 
     Returns:
-        tuple: (left, top, right, bottom) in screen coordinates.
+        tuple: (left, top, right, bottom) in screen coordinates, clamped to screen bounds.
     """
     rect = win32gui.GetClientRect(hwnd)
     left, top = rect[0], rect[1]
@@ -62,7 +62,16 @@ def get_client_region(hwnd):
     top_left = win32gui.ClientToScreen(hwnd, (left, top))
     bottom_right = win32gui.ClientToScreen(hwnd, (right, bottom))
 
-    return (top_left[0], top_left[1], bottom_right[0], bottom_right[1])
+    # Get screen resolution and clamp region to screen bounds
+    screen_width = ctypes.windll.user32.GetSystemMetrics(0)
+    screen_height = ctypes.windll.user32.GetSystemMetrics(1)
+
+    left_clamped = max(0, top_left[0])
+    top_clamped = max(0, top_left[1])
+    right_clamped = min(screen_width, bottom_right[0])
+    bottom_clamped = min(screen_height, bottom_right[1])
+
+    return (left_clamped, top_clamped, right_clamped, bottom_clamped)
 
 
 def validate_client_size(region, expected_width, expected_height):

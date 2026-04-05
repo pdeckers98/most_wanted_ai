@@ -48,12 +48,14 @@ class FrameWriter:
             try:
                 item = self._frame_queue.get(timeout=0.5)
                 if item is None:  # Sentinel value for shutdown
+                    self._frame_queue.task_done()
                     break
 
                 frame, frame_number = item
                 filename = self.session_dir / f"frame_{frame_number:06d}.npy"
                 np.save(filename, frame)
                 self._frame_count += 1
+                self._frame_queue.task_done()
 
             except queue.Empty:
                 # Check if stop was requested

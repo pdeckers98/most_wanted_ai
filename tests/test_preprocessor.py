@@ -28,7 +28,7 @@ def test_preprocess_frame_with_channel_dim():
 
 def test_preprocess_frame_dtype_conversion():
     """Test that dtype is converted to uint8 if needed."""
-    frame = np.random.randint(0, 256, (1024, 1280), dtype=np.float32) / 255.0
+    frame = np.random.randint(0, 256, (1024, 1280), dtype=np.uint8).astype(np.float32) / 255.0
 
     result = preprocess_frame(frame)
 
