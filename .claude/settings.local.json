@@ -4,7 +4,8 @@
       "Bash(git:*)",
       "Bash(pip3 list:*)",
       "Bash(py -m pip list)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python -m flake8 src/preprocessing/pipeline.py tests/test_preprocessing_pipeline.py)"
     ]
   }
 }
