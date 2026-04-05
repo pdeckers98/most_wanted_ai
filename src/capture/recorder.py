@@ -15,6 +15,9 @@ from src.capture.config import CaptureConfig
 from src.capture.grabber import FrameGrabber
 from src.capture.preprocessor import preprocess_frame
 from src.capture.writer import FrameWriter
+from src.input.config import ControllerConfig
+from src.input.controller import ControllerReader
+from src.input.input_logger import InputLogger
 from src.utils.window import (
     find_window_by_title,
     get_client_region,
@@ -26,11 +29,12 @@ from src.utils.window import (
 class ScreenCapture:
     """Main screen capture orchestrator."""
 
-    def __init__(self, config):
+    def __init__(self, config, controller_config=None):
         """Initialize screen capture system.
 
         Args:
             config: CaptureConfig instance.
+            controller_config: ControllerConfig instance, or None to disable input logging.
         """
         self.config = config
         self._recording = threading.Event()
@@ -52,6 +56,13 @@ class ScreenCapture:
         # Initialize components
         self._grabber = None
         self._writer = None
+        self._input_logger = None
+
+        # Initialize controller (optional)
+        if controller_config is not None:
+            self._controller = ControllerReader(controller_config)
+        else:
+            self._controller = None
 
     def _hotkey_toggle(self):
         """Toggle recording state via hotkey."""
@@ -72,6 +83,8 @@ class ScreenCapture:
         # Initialize components BEFORE setting recording flag to avoid race condition
         self._grabber = FrameGrabber(self._region, self.config.target_fps)
         self._writer = FrameWriter(session_dir)
+        if self._controller is not None:
+            self._input_logger = InputLogger(session_dir)
 
         self._grabber.start()
 
@@ -94,6 +107,9 @@ class ScreenCapture:
         if self._writer:
             self._writer.flush()
             self._writer.close()
+        if self._input_logger is not None:
+            self._input_logger.save()
+            self._input_logger = None
 
         elapsed = (datetime.now() - self._session_start).total_seconds()
 
@@ -119,12 +135,18 @@ class ScreenCapture:
                 time.sleep(0.001)
                 continue
 
+            # Sample controller state aligned to this frame
+            if self._controller is not None:
+                input_state = self._controller.read()
+
             # Preprocess: resize and greyscale squeeze
             processed = preprocess_frame(frame)
 
             # Write to disk (non-blocking queue)
             try:
                 self._writer.write(processed, self._frame_count)
+                if self._controller is not None and self._input_logger is not None:
+                    self._input_logger.record(input_state)
                 self._frame_count += 1
             except Exception as e:
                 print(f"Error writing frame: {e}")
@@ -172,6 +194,9 @@ class ScreenCapture:
         if self._grabber:
             self._grabber.close()
 
+        if self._controller is not None:
+            self._controller.close()
+
         keyboard.remove_all_hotkeys()
         print("Shutdown complete.")
 
@@ -205,6 +230,17 @@ def main():
         default="Need for Speed",
         help="Substring to search for in window title",
     )
+    parser.add_argument(
+        "--no-controller",
+        action="store_true",
+        help="Disable gamepad input logging (screen capture only)",
+    )
+    parser.add_argument(
+        "--controller-index",
+        type=int,
+        default=0,
+        help="Pygame joystick index (default 0 = first controller)",
+    )
 
     args = parser.parse_args()
 
@@ -215,8 +251,12 @@ def main():
         window_title_substring=args.window_title,
     )
 
+    controller_config = None
+    if not args.no_controller:
+        controller_config = ControllerConfig(joystick_index=args.controller_index)
+
     try:
-        capture = ScreenCapture(config)
+        capture = ScreenCapture(config, controller_config)
         capture.run()
     except KeyboardInterrupt:
         print("\nInterrupted.")
