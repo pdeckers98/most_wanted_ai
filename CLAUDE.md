@@ -40,6 +40,12 @@ data/                 # Local datasets, model checkpoints
 
 **Test**: `pytest tests/`
 
+**Lint**: `flake8 src/ tests/`
+
+## Code Quality
+
+This project uses **Flake8** for linting. Before presenting any code changes, I will verify the code passes Flake8 checks to ensure it meets the project's style and quality standards.
+
 ## Additional Documentation
 
 See `.claude/docs/` for specialized guides:
