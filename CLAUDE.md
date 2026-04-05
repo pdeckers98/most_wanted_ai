@@ -9,10 +9,16 @@ Hobby project developing an autonomous racing agent through offline RL, capturin
 ## Tech Stack
 
 - **Language**: Python 3.10+
-- **RL Algorithm**: TBD (offline learning approach)
-- **Inference Hardware**: GTX 1660 (6GB VRAM) - game + agent run locally
-- **Training**: Cloud-based (separate environment)
-- **Game Interaction**: Screen capture + controller input
+- **Training framework**: PyTorch (raw, no high-level wrapper)
+- **Phase 1 algorithm**: Behavioural Cloning (imitation learning) — baseline before offline RL
+- **Phase 2 algorithm**: Offline RL (algorithm TBD, likely IQL or TD3+BC)
+- **Model backbone**: ResNet-18 pretrained on ImageNet, first conv replaced for greyscale input
+- **Input representation**: 4-frame stack → shape `(4, 384, 480)` per sample
+- **Action head**: Hybrid — MSE loss on steer (continuous), BCE loss on throttle/brake (binary)
+- **Dataset**: ~1 hour of expert gameplay, ~108,000 frames at 30fps
+- **Inference hardware**: GTX 1660 (6GB VRAM) — game + agent run locally
+- **Training hardware**: Vast.ai GPU instance with persistent volume (data pre-uploaded before spin-up)
+- **Game interaction**: Screen capture (dxcam) + controller input (pygame)
 
 ## Project Structure
 

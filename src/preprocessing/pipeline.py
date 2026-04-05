@@ -113,6 +113,48 @@ def filter_invalid_frames(frames, inputs_arr):
     return frames[valid_mask], inputs_arr[valid_mask]
 
 
+def build_sequences(frames, inputs_arr, stack_size=4):
+    """Produce overlapping frame stacks aligned with their target inputs.
+
+    Each output sample consists of `stack_size` consecutive frames. The label
+    for a stack is the input recorded at the **last** frame of that stack.
+    The first `stack_size - 1` frames of the session are dropped because there
+    is not enough history to form a full window.
+
+    Args:
+        frames: np.ndarray of shape (N, H, W) float32.
+        inputs_arr: np.ndarray of shape (N, 3) float32.
+        stack_size: Number of consecutive frames per sample (default 4).
+
+    Returns:
+        Tuple of (stacked_frames, aligned_inputs) where:
+            stacked_frames: np.ndarray of shape (N - stack_size + 1,
+                stack_size, H, W) float32.
+            aligned_inputs: np.ndarray of shape (N - stack_size + 1, 3)
+                float32 — label is the input at the last frame of each stack.
+
+    Raises:
+        ValueError: If there are fewer frames than stack_size.
+    """
+    n = len(frames)
+    if n < stack_size:
+        raise ValueError(
+            f"Session has {n} frames, need at least {stack_size} "
+            f"to build sequences."
+        )
+
+    n_sequences = n - stack_size + 1
+    h, w = frames.shape[1], frames.shape[2]
+
+    stacked = np.empty((n_sequences, stack_size, h, w), dtype=np.float32)
+    for i in range(n_sequences):
+        stacked[i] = frames[i: i + stack_size]
+
+    aligned_inputs = inputs_arr[stack_size - 1:]
+
+    return stacked, aligned_inputs
+
+
 def process_session(session_dir, output_dir):
     """Run the full preprocessing pipeline on a single capture session.
 
@@ -140,12 +182,16 @@ def process_session(session_dir, output_dir):
     inputs_arr = encode_inputs(inputs_list)
 
     frames, inputs_arr = filter_invalid_frames(frames, inputs_arr)
-    n_processed = len(frames)
+    n_filtered = len(frames)
     logger.info(
         "After filtering: %d frames (removed %d).",
-        n_processed,
-        n_raw - n_processed,
+        n_filtered,
+        n_raw - n_filtered,
     )
+
+    frames, inputs_arr = build_sequences(frames, inputs_arr)
+    n_sequences = len(frames)
+    logger.info("Built %d sequences (stack_size=4).", n_sequences)
 
     np.save(output_dir / FRAMES_FILENAME, frames)
     np.save(output_dir / INPUTS_FILENAME, inputs_arr)
@@ -153,16 +199,18 @@ def process_session(session_dir, output_dir):
     meta = {
         "source_session": str(session_dir),
         "n_raw_frames": n_raw,
-        "n_processed_frames": n_processed,
+        "n_filtered_frames": n_filtered,
+        "n_sequences": n_sequences,
         "frame_shape": list(frames.shape[1:]),
         "frame_dtype": str(frames.dtype),
         "input_columns": ["steer", "throttle", "brake"],
+        "stack_size": 4,
     }
     with open(output_dir / META_FILENAME, "w") as f:
         json.dump(meta, f, indent=2)
 
     logger.info("Dataset written to: %s", output_dir)
-    return n_processed
+    return n_sequences
 
 
 def process_all_sessions(captures_dir, processed_dir):

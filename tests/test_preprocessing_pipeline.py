@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from src.preprocessing.pipeline import (
+    build_sequences,
     encode_inputs,
     filter_invalid_frames,
     load_session,
@@ -179,6 +180,67 @@ def test_filter_alignment():
 
 
 # ---------------------------------------------------------------------------
+# build_sequences
+# ---------------------------------------------------------------------------
+
+def test_build_sequences_output_shape():
+    frames = np.random.rand(10, 384, 480).astype(np.float32)
+    inputs_arr = np.random.rand(10, 3).astype(np.float32)
+    stacked, aligned = build_sequences(frames, inputs_arr, stack_size=4)
+    assert stacked.shape == (7, 4, 384, 480)
+    assert aligned.shape == (7, 3)
+
+
+def test_build_sequences_exact_stack_size():
+    frames = np.random.rand(4, 384, 480).astype(np.float32)
+    inputs_arr = np.random.rand(4, 3).astype(np.float32)
+    stacked, aligned = build_sequences(frames, inputs_arr, stack_size=4)
+    assert stacked.shape == (1, 4, 384, 480)
+    assert aligned.shape == (1, 3)
+
+
+def test_build_sequences_too_few_frames():
+    frames = np.random.rand(3, 384, 480).astype(np.float32)
+    inputs_arr = np.random.rand(3, 3).astype(np.float32)
+    with pytest.raises(ValueError, match="at least"):
+        build_sequences(frames, inputs_arr, stack_size=4)
+
+
+def test_build_sequences_label_alignment():
+    """Label at index i must be the input at frame i + stack_size - 1."""
+    n = 6
+    frames = np.random.rand(n, 384, 480).astype(np.float32)
+    inputs_arr = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
+    stacked, aligned = build_sequences(frames, inputs_arr, stack_size=4)
+    # sequence 0 → frames 0-3, label = input[3]
+    np.testing.assert_array_equal(aligned[0], inputs_arr[3])
+    # sequence 1 → frames 1-4, label = input[4]
+    np.testing.assert_array_equal(aligned[1], inputs_arr[4])
+
+
+def test_build_sequences_frame_content():
+    """Stacked frames must contain the correct source frames."""
+    n = 6
+    frames = np.arange(n * 384 * 480, dtype=np.float32).reshape(n, 384, 480)
+    inputs_arr = np.zeros((n, 3), dtype=np.float32)
+    stacked, _ = build_sequences(frames, inputs_arr, stack_size=4)
+    # sequence 0 → frames[0], frames[1], frames[2], frames[3]
+    np.testing.assert_array_equal(stacked[0, 0], frames[0])
+    np.testing.assert_array_equal(stacked[0, 3], frames[3])
+    # sequence 2 → frames[2], frames[3], frames[4], frames[5]
+    np.testing.assert_array_equal(stacked[2, 0], frames[2])
+    np.testing.assert_array_equal(stacked[2, 3], frames[5])
+
+
+def test_build_sequences_custom_stack_size():
+    frames = np.random.rand(10, 384, 480).astype(np.float32)
+    inputs_arr = np.random.rand(10, 3).astype(np.float32)
+    stacked, aligned = build_sequences(frames, inputs_arr, stack_size=2)
+    assert stacked.shape == (9, 2, 384, 480)
+    assert aligned.shape == (9, 3)
+
+
+# ---------------------------------------------------------------------------
 # process_session (integration)
 # ---------------------------------------------------------------------------
 
@@ -190,7 +252,8 @@ def test_process_session_writes_files(tmp_path):
     out_dir = tmp_path / "processed"
     n = process_session(session_dir, out_dir)
 
-    assert n == 6
+    # 6 frames → 6 - 4 + 1 = 3 sequences
+    assert n == 3
     assert (out_dir / "frames.npy").exists()
     assert (out_dir / "inputs.npy").exists()
     assert (out_dir / "dataset_meta.json").exists()
@@ -199,7 +262,7 @@ def test_process_session_writes_files(tmp_path):
 def test_process_session_output_shapes(tmp_path):
     session_dir = tmp_path / "session_shapes"
     session_dir.mkdir()
-    _make_session(session_dir, n_frames=4)
+    _make_session(session_dir, n_frames=8)
 
     out_dir = tmp_path / "processed_shapes"
     process_session(session_dir, out_dir)
@@ -207,16 +270,18 @@ def test_process_session_output_shapes(tmp_path):
     frames = np.load(out_dir / "frames.npy")
     inputs_arr = np.load(out_dir / "inputs.npy")
 
-    assert frames.shape == (4, 384, 480)
+    # 8 frames → 8 - 4 + 1 = 5 sequences
+    assert frames.shape == (5, 4, 384, 480)
     assert frames.dtype == np.float32
-    assert inputs_arr.shape == (4, 3)
+    assert inputs_arr.shape == (5, 3)
     assert inputs_arr.dtype == np.float32
 
 
 def test_process_session_filters_blanks(tmp_path):
+    # 8 frames, 2 blank → 6 valid → 6 - 4 + 1 = 3 sequences
     session_dir = tmp_path / "session_blanks"
     session_dir.mkdir()
-    _make_session(session_dir, n_frames=5, blank_indices=[1, 3])
+    _make_session(session_dir, n_frames=8, blank_indices=[1, 3])
 
     out_dir = tmp_path / "processed_blanks"
     n = process_session(session_dir, out_dir)
@@ -227,7 +292,7 @@ def test_process_session_filters_blanks(tmp_path):
 def test_process_session_meta_content(tmp_path):
     session_dir = tmp_path / "session_meta"
     session_dir.mkdir()
-    _make_session(session_dir, n_frames=3)
+    _make_session(session_dir, n_frames=6)
 
     out_dir = tmp_path / "processed_meta"
     process_session(session_dir, out_dir)
@@ -235,7 +300,9 @@ def test_process_session_meta_content(tmp_path):
     with open(out_dir / "dataset_meta.json") as f:
         meta = json.load(f)
 
-    assert meta["n_raw_frames"] == 3
-    assert meta["n_processed_frames"] == 3
-    assert meta["frame_shape"] == [384, 480]
+    assert meta["n_raw_frames"] == 6
+    assert meta["n_filtered_frames"] == 6
+    assert meta["n_sequences"] == 3
+    assert meta["frame_shape"] == [4, 384, 480]
+    assert meta["stack_size"] == 4
     assert meta["input_columns"] == ["steer", "throttle", "brake"]
