@@ -475,9 +475,11 @@ def main():
             torch.save(model.state_dict(), best_model_path)
             logger.info(f"Saved best model (val_loss={best_val_loss:.4f})")
 
-    wandb.finish()
+    # Save training metadata (before wandb.finish())
+    wandb_url = wandb.run.get_url()
+    wandb_run_id = wandb.run.id
+    wandb_project = wandb.run.project
 
-    # Save training metadata
     metadata = {
         'best_val_loss': float(best_val_loss),
         'epochs': args.epochs,
@@ -487,15 +489,17 @@ def main():
         'steer_weight': args.steer_weight,
         'train_samples': len(train_dataset),
         'val_samples': len(val_dataset),
-        'wandb_run_id': wandb.run.id,
-        'wandb_project': wandb.run.project,
+        'wandb_run_id': wandb_run_id,
+        'wandb_project': wandb_project,
     }
     metadata_path = args.output_dir / 'training_metadata.json'
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
+    wandb.finish()
+
     logger.info(f"Training complete. Best model: {best_model_path}")
-    logger.info(f"Weights & Biases dashboard: {wandb.run.get_url()}")
+    logger.info(f"Weights & Biases dashboard: {wandb_url}")
 
 
 if __name__ == '__main__':
