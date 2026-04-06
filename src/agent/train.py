@@ -2,11 +2,14 @@
 Behavioral Cloning training script for NFS Most Wanted 2005 racing agent.
 
 Trains a ResNet-18 backbone with dual action heads (steer + throttle/brake)
-using supervised learning on expert gameplay data. Uses TensorBoard for
-real-time loss visualization.
+using supervised learning on expert gameplay data. Logs metrics to Weights & Biases
+for real-time loss visualization and analysis.
 
 Usage:
     python src/agent/train.py --data-dir /mnt/data/processed --output-dir /mnt/data/checkpoints
+
+Prerequisites:
+    wandb login  # One-time setup to link W&B account
 """
 
 import argparse
@@ -21,7 +24,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
-from torch.utils.tensorboard import SummaryWriter
+import wandb
 from torchvision import models
 
 
@@ -392,20 +395,21 @@ def main():
     )
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    # TensorBoard logger
-    tb_dir = args.output_dir / 'tensorboard_logs'
-    tb_dir.mkdir(parents=True, exist_ok=True)
-    writer = SummaryWriter(log_dir=tb_dir)
-
-    # Log hyperparameters
+    # Initialize Weights & Biases
     hparams = {
         'batch_size': args.batch_size,
         'epochs': args.epochs,
         'lr': args.lr,
         'weight_decay': args.weight_decay,
         'steer_weight': args.steer_weight,
+        'num_workers': args.num_workers,
     }
-    logger.info(f"Hyperparameters: {hparams}")
+    wandb.init(
+        project='nfs-most-wanted-2005',
+        config=hparams,
+        name=f'bc-baseline-{args.batch_size}bs'
+    )
+    logger.info(f"Weights & Biases initialized | Run: {wandb.run.name}")
 
     # Training loop
     best_val_loss = float('inf')
@@ -435,14 +439,17 @@ def main():
             f"LR={optimizer.param_groups[0]['lr']:.6f}"
         )
 
-        # TensorBoard logging
-        writer.add_scalar('train/steer_loss', train_steer_loss, epoch)
-        writer.add_scalar('train/action_loss', train_action_loss, epoch)
-        writer.add_scalar('train/total_loss', train_total_loss, epoch)
-        writer.add_scalar('val/steer_loss', val_steer_loss, epoch)
-        writer.add_scalar('val/action_loss', val_action_loss, epoch)
-        writer.add_scalar('val/total_loss', val_total_loss, epoch)
-        writer.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], epoch)
+        # Weights & Biases logging
+        wandb.log({
+            'epoch': epoch,
+            'train/steer_loss': train_steer_loss,
+            'train/action_loss': train_action_loss,
+            'train/total_loss': train_total_loss,
+            'val/steer_loss': val_steer_loss,
+            'val/action_loss': val_action_loss,
+            'val/total_loss': val_total_loss,
+            'learning_rate': optimizer.param_groups[0]['lr'],
+        })
 
         # Save best model
         if val_total_loss < best_val_loss:
@@ -450,7 +457,7 @@ def main():
             torch.save(model.state_dict(), best_model_path)
             logger.info(f"Saved best model (val_loss={best_val_loss:.4f})")
 
-    writer.close()
+    wandb.finish()
 
     # Save training metadata
     metadata = {
@@ -462,14 +469,15 @@ def main():
         'steer_weight': args.steer_weight,
         'train_samples': len(train_dataset),
         'val_samples': len(val_dataset),
-        'tensorboard_dir': str(tb_dir),
+        'wandb_run_id': wandb.run.id,
+        'wandb_project': wandb.run.project,
     }
     metadata_path = args.output_dir / 'training_metadata.json'
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
     logger.info(f"Training complete. Best model: {best_model_path}")
-    logger.info(f"TensorBoard logs: tensorboard --logdir={tb_dir}")
+    logger.info(f"Weights & Biases dashboard: {wandb.run.get_url()}")
 
 
 if __name__ == '__main__':
