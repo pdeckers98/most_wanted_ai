@@ -283,7 +283,7 @@ def process_all_sessions(captures_dir, processed_dir, chunk_size=1000):
 
     session_dirs = sorted(
         p for p in captures_dir.iterdir()
-        if p.is_dir() and (p / "inputs.json").exists()!
+        if p.is_dir() and (p / "inputs.json").exists()
     )
 
     if not session_dirs:
