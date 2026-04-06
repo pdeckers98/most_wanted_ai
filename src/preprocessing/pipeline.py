@@ -113,6 +113,54 @@ def filter_invalid_frames(frames, inputs_arr):
     return frames[valid_mask], inputs_arr[valid_mask]
 
 
+def _build_sequences_to_memmap(frames, inputs_arr, out_path, stack_size=4, chunk_size=1000):
+    """Build stacked sequences and write directly to disk via memmap to avoid OOM.
+
+    Args:
+        frames: np.ndarray of shape (N, H, W) float32.
+        inputs_arr: np.ndarray of shape (N, 3) float32.
+        out_path: Path where frames.npy will be written.
+        stack_size: Number of consecutive frames per sample (default 4).
+        chunk_size: Number of sequences to process at a time in RAM (default 1000).
+
+    Returns:
+        Tuple of (n_sequences, aligned_inputs) where:
+            n_sequences: int — number of sequences produced
+            aligned_inputs: np.ndarray of shape (n_sequences, 3) float32 — labels
+
+    Raises:
+        ValueError: If there are fewer frames than stack_size.
+    """
+    n = len(frames)
+    if n < stack_size:
+        raise ValueError(
+            f"Session has {n} frames, need at least {stack_size} "
+            f"to build sequences."
+        )
+
+    n_sequences = n - stack_size + 1
+    h, w = frames.shape[1], frames.shape[2]
+
+    # Pre-allocate the output file on disk as a memmap
+    memmap_file = np.lib.format.open_memmap(
+        out_path, mode='w+', dtype=np.float32,
+        shape=(n_sequences, stack_size, h, w)
+    )
+
+    # Fill the memmap in chunks to avoid holding all stacks in RAM
+    for start in range(0, n_sequences, chunk_size):
+        end = min(start + chunk_size, n_sequences)
+        for i in range(start, end):
+            memmap_file[i] = frames[i:i + stack_size]
+        logger.info("Built sequences %d/%d.", end, n_sequences)
+
+    # Close/flush the memmap to disk
+    del memmap_file
+
+    aligned_inputs = inputs_arr[stack_size - 1:]
+    return n_sequences, aligned_inputs
+
+
 def build_sequences(frames, inputs_arr, stack_size=4):
     """Produce overlapping frame stacks aligned with their target inputs.
 
@@ -155,7 +203,7 @@ def build_sequences(frames, inputs_arr, stack_size=4):
     return stacked, aligned_inputs
 
 
-def process_session(session_dir, output_dir):
+def process_session(session_dir, output_dir, chunk_size=1000):
     """Run the full preprocessing pipeline on a single capture session.
 
     Loads raw frames and inputs, normalizes, encodes, filters invalid frames,
@@ -165,6 +213,8 @@ def process_session(session_dir, output_dir):
         session_dir: Path to the raw capture session directory.
         output_dir: Path to directory where the processed dataset will be saved.
             Created if it does not exist.
+        chunk_size: Number of sequences to process in RAM at a time (default 1000).
+            Reduces peak memory usage for large sessions.
 
     Returns:
         int: Number of frames in the processed dataset.
@@ -189,11 +239,12 @@ def process_session(session_dir, output_dir):
         n_raw - n_filtered,
     )
 
-    frames, inputs_arr = build_sequences(frames, inputs_arr)
-    n_sequences = len(frames)
+    frames_out_path = output_dir / FRAMES_FILENAME
+    n_sequences, inputs_arr = _build_sequences_to_memmap(
+        frames, inputs_arr, frames_out_path, stack_size=4, chunk_size=chunk_size
+    )
     logger.info("Built %d sequences (stack_size=4).", n_sequences)
 
-    np.save(output_dir / FRAMES_FILENAME, frames)
     np.save(output_dir / INPUTS_FILENAME, inputs_arr)
 
     meta = {
@@ -201,8 +252,8 @@ def process_session(session_dir, output_dir):
         "n_raw_frames": n_raw,
         "n_filtered_frames": n_filtered,
         "n_sequences": n_sequences,
-        "frame_shape": list(frames.shape[1:]),
-        "frame_dtype": str(frames.dtype),
+        "frame_shape": [4, 384, 480],
+        "frame_dtype": "float32",
         "input_columns": ["steer", "throttle", "brake"],
         "stack_size": 4,
     }
@@ -213,7 +264,7 @@ def process_session(session_dir, output_dir):
     return n_sequences
 
 
-def process_all_sessions(captures_dir, processed_dir):
+def process_all_sessions(captures_dir, processed_dir, chunk_size=1000):
     """Run the preprocessing pipeline over all sessions in captures_dir.
 
     Each session subdirectory in captures_dir is processed and written to a
@@ -222,6 +273,7 @@ def process_all_sessions(captures_dir, processed_dir):
     Args:
         captures_dir: Root directory containing raw session subdirectories.
         processed_dir: Root directory where processed datasets will be written.
+        chunk_size: Number of sequences to process in RAM at a time (default 1000).
 
     Returns:
         dict: Mapping of session name -> frame count for each processed session.
@@ -231,7 +283,7 @@ def process_all_sessions(captures_dir, processed_dir):
 
     session_dirs = sorted(
         p for p in captures_dir.iterdir()
-        if p.is_dir() and (p / "inputs.json").exists()
+        if p.is_dir() and (p / "inputs.json").exists()!
     )
 
     if not session_dirs:
@@ -242,7 +294,7 @@ def process_all_sessions(captures_dir, processed_dir):
     for session_dir in session_dirs:
         out = processed_dir / session_dir.name
         try:
-            n = process_session(session_dir, out)
+            n = process_session(session_dir, out, chunk_size=chunk_size)
             results[session_dir.name] = n
         except Exception:
             logger.exception("Failed to process session: %s", session_dir)
@@ -282,15 +334,23 @@ def main():
         default=None,
         help="Process a single session by name instead of all sessions",
     )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1000,
+        help="Number of sequences to process in RAM at a time (default: 1000)",
+    )
     args = parser.parse_args()
 
     if args.session:
         session_dir = args.captures_dir / args.session
         out_dir = args.output_dir / args.session
-        n = process_session(session_dir, out_dir)
+        n = process_session(session_dir, out_dir, chunk_size=args.chunk_size)
         print(f"Done. {n} frames written to {out_dir}")
     else:
-        results = process_all_sessions(args.captures_dir, args.output_dir)
+        results = process_all_sessions(
+            args.captures_dir, args.output_dir, chunk_size=args.chunk_size
+        )
         total = sum(results.values())
         print(f"Done. {len(results)} sessions, {total} total frames.")
 
