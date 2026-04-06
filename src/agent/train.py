@@ -17,6 +17,8 @@ import json
 import logging
 from pathlib import Path
 from typing import Tuple
+from datetime import timedelta
+import time
 
 import numpy as np
 import torch
@@ -414,8 +416,11 @@ def main():
     # Training loop
     best_val_loss = float('inf')
     best_model_path = args.output_dir / 'best_model.pt'
+    epoch_times = []
 
     for epoch in range(1, args.epochs + 1):
+        epoch_start = time.time()
+
         # Train
         train_steer_loss, train_action_loss, train_total_loss = train_epoch(
             model, train_loader, optimizer, device, args.steer_weight
@@ -429,6 +434,16 @@ def main():
         # LR scheduling
         scheduler.step()
 
+        epoch_time = time.time() - epoch_start
+        epoch_times.append(epoch_time)
+        avg_epoch_time = np.mean(epoch_times)
+        remaining_epochs = args.epochs - epoch
+        estimated_remaining = remaining_epochs * avg_epoch_time
+
+        # Format time estimates
+        remaining_str = str(timedelta(seconds=int(estimated_remaining)))
+        epoch_time_str = f"{epoch_time:.1f}s"
+
         # Logging
         logger.info(
             f"Epoch {epoch}/{args.epochs} | "
@@ -436,7 +451,9 @@ def main():
             f"total={train_total_loss:.4f} | "
             f"Val: steer={val_steer_loss:.4f} action={val_action_loss:.4f} "
             f"total={val_total_loss:.4f} | "
-            f"LR={optimizer.param_groups[0]['lr']:.6f}"
+            f"LR={optimizer.param_groups[0]['lr']:.6f} | "
+            f"Epoch time: {epoch_time_str} | "
+            f"Est. remaining: {remaining_str}"
         )
 
         # Weights & Biases logging
@@ -449,6 +466,7 @@ def main():
             'val/action_loss': val_action_loss,
             'val/total_loss': val_total_loss,
             'learning_rate': optimizer.param_groups[0]['lr'],
+            'epoch_time_seconds': epoch_time,
         })
 
         # Save best model
