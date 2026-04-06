@@ -45,14 +45,15 @@ class RacingDataset(Dataset):
     PyTorch Dataset for preprocessed racing frames and actions.
 
     Loads 4-frame stacks and corresponding input actions from a session.
-    Applies chronological train/val split without shuffling to avoid
-    temporal leakage.
+    Applies random train/val split to ensure validation set captures
+    diversity across all race conditions.
 
     Args:
         frames_path: Path to frames.npy (shape: (N, 4, 384, 480))
         inputs_path: Path to inputs.npy (shape: (N, 3) [steer, throttle, brake])
-        split: 'train' or 'val' — uses last 10% for validation
+        split: 'train' or 'val' — random 90/10 split
         normalize: If True, normalize frames to [0, 1]
+        seed: Random seed for reproducible splits (default: 42)
     """
 
     def __init__(
@@ -60,7 +61,8 @@ class RacingDataset(Dataset):
         frames_path: Path,
         inputs_path: Path,
         split: str = 'train',
-        normalize: bool = True
+        normalize: bool = True,
+        seed: int = 42
     ):
         assert split in ['train', 'val'], f"split must be 'train' or 'val', got {split}"
 
@@ -71,14 +73,21 @@ class RacingDataset(Dataset):
         assert len(self.frames) == len(self.inputs), \
             f"Mismatch: {len(self.frames)} frames vs {len(self.inputs)} inputs"
 
-        # Chronological split: last 10% for validation
-        split_idx = int(len(self.frames) * 0.9)
+        # Random split: 90% train, 10% val
+        rng = np.random.RandomState(seed)
+        n_samples = len(self.frames)
+        val_size = int(n_samples * 0.1)
+        val_indices = rng.choice(n_samples, size=val_size, replace=False)
+        val_mask = np.zeros(n_samples, dtype=bool)
+        val_mask[val_indices] = True
+
         if split == 'train':
-            self.frames = self.frames[:split_idx]
-            self.inputs = self.inputs[:split_idx]
+            mask = ~val_mask
         else:  # val
-            self.frames = self.frames[split_idx:]
-            self.inputs = self.inputs[split_idx:]
+            mask = val_mask
+
+        self.frames = self.frames[mask]
+        self.inputs = self.inputs[mask]
 
         self.normalize = normalize
         logger.info(f"Loaded {split} split: {len(self.frames)} samples")
