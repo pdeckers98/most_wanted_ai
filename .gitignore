@@ -2,6 +2,7 @@
 data/captures/
 data/processed/
 data/checkpoints/
+data/*.zip
 
 # Python
 __pycache__/
