@@ -10,7 +10,7 @@ NOTE: On first run, go into the game's controller options and reassign
       controls to the new virtual device that appears in Windows.
 
 Controls:
-  F7  - Toggle agent on / off
+  F8  - Toggle agent on / off
   RB  - Hold to override the agent with your own input
 
 Usage:
@@ -93,6 +93,7 @@ class InferenceAgent:
         region: tuple,
         target_fps: int = 30,
         device: str = 'cuda',
+        controller_index: int = 0,
     ):
         self._device = torch.device(device)
         self._frame_interval = 1.0 / target_fps
@@ -103,7 +104,7 @@ class InferenceAgent:
         logger.info("Loading checkpoint: %s", checkpoint_path)
         self._model = RacingAgent(pretrained=False).to(self._device)
         ckpt = torch.load(checkpoint_path, map_location=self._device)
-        self._model.load_state_dict(ckpt['model_state_dict'])
+        self._model.load_state_dict(ckpt)
         self._model.eval()
         logger.info("Model loaded and ready.")
 
@@ -111,19 +112,23 @@ class InferenceAgent:
         self._grabber = FrameGrabber(region=region, target_fps=target_fps)
         self._buffer = collections.deque(maxlen=FRAME_BUFFER_SIZE)
 
+        # ---- Virtual controller output ------------------------------------
+        self._vpad = vg.VX360Gamepad()
+        logger.info("Virtual gamepad created (XInput slot 0).")
+
         # ---- Physical controller ------------------------------------------
-        ctrl_cfg = ControllerConfig()
+        # Must be initialised after vgamepad so the physical controller lands
+        # on a higher XInput slot. Prompt the user to plug in now.
+        input("Plug in your physical controller then press Enter...")
+        ctrl_cfg = ControllerConfig(joystick_index=controller_index)
         self._controller = ControllerReader(ctrl_cfg)
         # Keep a direct reference for button polling after event pump
         self._joystick = self._controller._joystick
 
-        # ---- Virtual controller output ------------------------------------
-        self._vpad = vg.VX360Gamepad()
-        logger.info("Virtual gamepad created.")
-
-        # ---- F7 hotkey ----------------------------------------------------
-        keyboard.add_hotkey('f7', self._toggle)
-        logger.info("Ready. Press F7 to activate the agent.")
+        # ---- F8 hotkey ----------------------------------------------------
+        keyboard.add_hotkey('f8', self._toggle)
+        self._last_print = 0.0
+        logger.info("Ready. Press F8 to activate the agent.")
 
     # -----------------------------------------------------------------------
     # Private helpers
@@ -233,6 +238,30 @@ class InferenceAgent:
                     steer, throttle, brake = self._predict(stack)
                     self._send(steer, throttle, brake)
 
+                # --- Periodic output print (every 3 seconds) ---------------
+                now = time.monotonic()
+                if now - self._last_print >= 3.0:
+                    self._last_print = now
+                    state = (
+                        'OVERRIDE' if (active and rb)
+                        else 'AGENT' if active
+                        else 'MANUAL'
+                    )
+                    if active and not rb:
+                        print(
+                            f"[{state}] "
+                            f"steer={steer:+.3f}  "
+                            f"throttle={throttle}  "
+                            f"brake={brake}"
+                        )
+                    else:
+                        print(
+                            f"[{state}] "
+                            f"steer={physical['steer']:+.3f}  "
+                            f"throttle={physical['throttle']}  "
+                            f"brake={physical['brake']}"
+                        )
+
                 # --- Pace the loop to target FPS ---------------------------
                 elapsed = time.monotonic() - t0
                 wait = self._frame_interval - elapsed
@@ -287,6 +316,14 @@ def main() -> None:
         '--device', type=str, default='cuda', choices=['cuda', 'cpu'],
         help='PyTorch device (default: cuda)',
     )
+    parser.add_argument(
+        '--controller-index', type=int, default=0,
+        help=(
+            'Pygame joystick index for the physical controller (default: 0). '
+            'Set to 1 if you unplug/replug the controller after starting the '
+            'script so vgamepad claims XInput slot 0.'
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -295,6 +332,7 @@ def main() -> None:
         region=(args.left, args.top, args.right, args.bottom),
         target_fps=args.fps,
         device=args.device,
+        controller_index=args.controller_index,
     )
     agent.run()
 

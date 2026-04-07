@@ -43,7 +43,7 @@ def _make_agent() -> InferenceAgent:
          patch(_VG), \
          patch(_ADD_HOTKEY):
 
-        mock_load.return_value = {'model_state_dict': {}}
+        mock_load.return_value = {}  # train.py saves state_dict directly
         mock_ctrl_cls.return_value._joystick = MagicMock()
 
         agent = InferenceAgent(

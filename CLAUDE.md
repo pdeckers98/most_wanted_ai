@@ -42,7 +42,9 @@ data/                 # Local datasets, model checkpoints
 
 **Preprocess data**: `python src/preprocessing/pipeline.py`
 
-**Run inference**: `python src/agent/inference.py`
+**Run inference**: `python -m src.agent.inference`
+
+**Train**: `python -m src.agent.train --data-dir /mnt/data/processed --output-dir /mnt/data/checkpoints`
 
 **Test**: `pytest tests/`
 

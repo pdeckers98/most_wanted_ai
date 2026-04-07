@@ -24,9 +24,9 @@ This only needs to be done once.
 ## Running
 
 ```bash
-python src/agent/inference.py
+python -m src.agent.inference
 # Custom capture region or checkpoint:
-python src/agent/inference.py --right 1920 --bottom 1080 --checkpoint data/checkpoints/best_model.pt
+python -m src.agent.inference --right 1920 --bottom 1080 --checkpoint data/checkpoints/best_model.pt
 ```
 
 | Flag | Default | Description |
@@ -40,7 +40,7 @@ python src/agent/inference.py --right 1920 --bottom 1080 --checkpoint data/check
 
 | Input | Effect |
 |-------|--------|
-| **F7** | Toggle agent on / off |
+| **F8** | Toggle agent on / off |
 | **RB (hold)** | Override — passes your physical input through while held |
 
 Audio feedback on toggle: high beep (880 Hz) = on, low beep (440 Hz) = off.
@@ -59,8 +59,9 @@ Audio feedback on toggle: high beep (880 Hz) = on, low beep (440 Hz) = off.
 from src.agent.model import RacingAgent
 
 model = RacingAgent(pretrained=False)
-ckpt = torch.load("data/checkpoints/best_model.pt", map_location="cuda")
-model.load_state_dict(ckpt["model_state_dict"])
+# train.py saves state_dict directly (not wrapped in a dict)
+state_dict = torch.load("data/checkpoints/best_model.pt", map_location="cuda")
+model.load_state_dict(state_dict)
 model.eval().cuda()
 ```
 
