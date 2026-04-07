@@ -113,7 +113,8 @@ def filter_invalid_frames(frames, inputs_arr):
     return frames[valid_mask], inputs_arr[valid_mask]
 
 
-def _build_sequences_to_memmap(frames, inputs_arr, out_path, stack_size=4, chunk_size=1000):
+def _build_sequences_to_memmap(frames, inputs_arr, out_path, stack_size=4,
+                               chunk_size=1000, filter_steering=False):
     """Build stacked sequences and write directly to disk via memmap to avoid OOM.
 
     Args:
@@ -122,6 +123,8 @@ def _build_sequences_to_memmap(frames, inputs_arr, out_path, stack_size=4, chunk
         out_path: Path where frames.npy will be written.
         stack_size: Number of consecutive frames per sample (default 4).
         chunk_size: Number of sequences to process at a time in RAM (default 1000).
+        filter_steering: If True, keep only sequences where label
+            (last frame input) has steering != 0.
 
     Returns:
         Tuple of (n_sequences, aligned_inputs) where:
@@ -141,27 +144,43 @@ def _build_sequences_to_memmap(frames, inputs_arr, out_path, stack_size=4, chunk
     n_sequences = n - stack_size + 1
     h, w = frames.shape[1], frames.shape[2]
 
+    # Compute which sequences to keep (before memmap allocation)
+    aligned_inputs_temp = inputs_arr[stack_size - 1:]
+    if filter_steering:
+        keep_mask = aligned_inputs_temp[:, 0] != 0  # steer column (index 0)
+        n_to_keep = int(keep_mask.sum())
+    else:
+        keep_mask = None
+        n_to_keep = n_sequences
+
     # Pre-allocate the output file on disk as a memmap
     memmap_file = np.lib.format.open_memmap(
         out_path, mode='w+', dtype=np.float32,
-        shape=(n_sequences, stack_size, h, w)
+        shape=(n_to_keep, stack_size, h, w)
     )
 
     # Fill the memmap in chunks to avoid holding all stacks in RAM
+    out_idx = 0
     for start in range(0, n_sequences, chunk_size):
         end = min(start + chunk_size, n_sequences)
         for i in range(start, end):
-            memmap_file[i] = frames[i:i + stack_size]
-        logger.info("Built sequences %d/%d.", end, n_sequences)
+            if keep_mask is None or keep_mask[i]:
+                memmap_file[out_idx] = frames[i:i + stack_size]
+                out_idx += 1
+        logger.info("Built sequences %d/%d (keeping %d).", end, n_sequences, out_idx)
 
     # Close/flush the memmap to disk
     del memmap_file
 
-    aligned_inputs = inputs_arr[stack_size - 1:]
-    return n_sequences, aligned_inputs
+    if filter_steering:
+        aligned_inputs = aligned_inputs_temp[keep_mask]
+    else:
+        aligned_inputs = aligned_inputs_temp
+
+    return n_to_keep, aligned_inputs
 
 
-def build_sequences(frames, inputs_arr, stack_size=4):
+def build_sequences(frames, inputs_arr, stack_size=4, filter_steering=False):
     """Produce overlapping frame stacks aligned with their target inputs.
 
     Each output sample consists of `stack_size` consecutive frames. The label
@@ -173,13 +192,15 @@ def build_sequences(frames, inputs_arr, stack_size=4):
         frames: np.ndarray of shape (N, H, W) float32.
         inputs_arr: np.ndarray of shape (N, 3) float32.
         stack_size: Number of consecutive frames per sample (default 4).
+        filter_steering: If True, keep only sequences where label
+            (last frame input) has steering != 0.
 
     Returns:
         Tuple of (stacked_frames, aligned_inputs) where:
-            stacked_frames: np.ndarray of shape (N - stack_size + 1,
-                stack_size, H, W) float32.
-            aligned_inputs: np.ndarray of shape (N - stack_size + 1, 3)
-                float32 — label is the input at the last frame of each stack.
+            stacked_frames: np.ndarray of shape (N_kept, stack_size, H, W)
+                float32.
+            aligned_inputs: np.ndarray of shape (N_kept, 3) float32 — label
+                is the input at the last frame of each stack.
 
     Raises:
         ValueError: If there are fewer frames than stack_size.
@@ -194,16 +215,29 @@ def build_sequences(frames, inputs_arr, stack_size=4):
     n_sequences = n - stack_size + 1
     h, w = frames.shape[1], frames.shape[2]
 
-    stacked = np.empty((n_sequences, stack_size, h, w), dtype=np.float32)
-    for i in range(n_sequences):
-        stacked[i] = frames[i: i + stack_size]
-
     aligned_inputs = inputs_arr[stack_size - 1:]
+
+    if filter_steering:
+        keep_mask = aligned_inputs[:, 0] != 0  # steer column (index 0)
+        n_to_keep = int(keep_mask.sum())
+    else:
+        keep_mask = None
+        n_to_keep = n_sequences
+
+    stacked = np.empty((n_to_keep, stack_size, h, w), dtype=np.float32)
+    out_idx = 0
+    for i in range(n_sequences):
+        if keep_mask is None or keep_mask[i]:
+            stacked[out_idx] = frames[i: i + stack_size]
+            out_idx += 1
+
+    if filter_steering:
+        aligned_inputs = aligned_inputs[keep_mask]
 
     return stacked, aligned_inputs
 
 
-def process_session(session_dir, output_dir, chunk_size=1000):
+def process_session(session_dir, output_dir, chunk_size=1000, filter_steering=False):
     """Run the full preprocessing pipeline on a single capture session.
 
     Loads raw frames and inputs, normalizes, encodes, filters invalid frames,
@@ -215,6 +249,7 @@ def process_session(session_dir, output_dir, chunk_size=1000):
             Created if it does not exist.
         chunk_size: Number of sequences to process in RAM at a time (default 1000).
             Reduces peak memory usage for large sessions.
+        filter_steering: If True, keep only sequences where steering label != 0.
 
     Returns:
         int: Number of frames in the processed dataset.
@@ -241,7 +276,8 @@ def process_session(session_dir, output_dir, chunk_size=1000):
 
     frames_out_path = output_dir / FRAMES_FILENAME
     n_sequences, inputs_arr = _build_sequences_to_memmap(
-        frames, inputs_arr, frames_out_path, stack_size=4, chunk_size=chunk_size
+        frames, inputs_arr, frames_out_path, stack_size=4, chunk_size=chunk_size,
+        filter_steering=filter_steering
     )
     logger.info("Built %d sequences (stack_size=4).", n_sequences)
 
@@ -256,6 +292,7 @@ def process_session(session_dir, output_dir, chunk_size=1000):
         "frame_dtype": "float32",
         "input_columns": ["steer", "throttle", "brake"],
         "stack_size": 4,
+        "filter_steering": filter_steering,
     }
     with open(output_dir / META_FILENAME, "w") as f:
         json.dump(meta, f, indent=2)
@@ -264,7 +301,7 @@ def process_session(session_dir, output_dir, chunk_size=1000):
     return n_sequences
 
 
-def process_all_sessions(captures_dir, processed_dir, chunk_size=1000):
+def process_all_sessions(captures_dir, processed_dir, chunk_size=1000, filter_steering=False):
     """Run the preprocessing pipeline over all sessions in captures_dir.
 
     Each session subdirectory in captures_dir is processed and written to a
@@ -274,6 +311,7 @@ def process_all_sessions(captures_dir, processed_dir, chunk_size=1000):
         captures_dir: Root directory containing raw session subdirectories.
         processed_dir: Root directory where processed datasets will be written.
         chunk_size: Number of sequences to process in RAM at a time (default 1000).
+        filter_steering: If True, keep only sequences where steering label != 0.
 
     Returns:
         dict: Mapping of session name -> frame count for each processed session.
@@ -294,7 +332,10 @@ def process_all_sessions(captures_dir, processed_dir, chunk_size=1000):
     for session_dir in session_dirs:
         out = processed_dir / session_dir.name
         try:
-            n = process_session(session_dir, out, chunk_size=chunk_size)
+            n = process_session(
+                session_dir, out, chunk_size=chunk_size,
+                filter_steering=filter_steering
+            )
             results[session_dir.name] = n
         except Exception:
             logger.exception("Failed to process session: %s", session_dir)
@@ -302,6 +343,65 @@ def process_all_sessions(captures_dir, processed_dir, chunk_size=1000):
     total = sum(results.values())
     logger.info(
         "Processed %d sessions, %d total frames.", len(results), total
+    )
+    return results
+
+
+def process_sessions_until_target(captures_dir, processed_dir, target_frames=20000,
+                                  chunk_size=1000, filter_steering=False):
+    """Process sessions sequentially until reaching target frame count or exhausting sessions.
+
+    Processes sessions in order, stopping as soon as accumulated frames >= target_frames
+    or all sessions are processed.
+
+    Args:
+        captures_dir: Root directory containing raw session subdirectories.
+        processed_dir: Root directory where processed datasets will be written.
+        target_frames: Target number of stacked frames to accumulate (default 20000).
+        chunk_size: Number of sequences to process in RAM at a time (default 1000).
+        filter_steering: If True, keep only sequences where steering label != 0.
+
+    Returns:
+        dict: Mapping of session name -> frame count for each processed session.
+    """
+    captures_dir = Path(captures_dir)
+    processed_dir = Path(processed_dir)
+
+    session_dirs = sorted(
+        p for p in captures_dir.iterdir()
+        if p.is_dir() and (p / "inputs.json").exists()
+    )
+
+    if not session_dirs:
+        logger.warning("No sessions with inputs.json found in: %s", captures_dir)
+        return {}
+
+    results = {}
+    total_frames = 0
+
+    for session_dir in session_dirs:
+        out = processed_dir / session_dir.name
+        try:
+            n = process_session(
+                session_dir, out, chunk_size=chunk_size,
+                filter_steering=filter_steering
+            )
+            results[session_dir.name] = n
+            total_frames += n
+            logger.info(
+                "Session %s: %d frames (total: %d/%d)",
+                session_dir.name, n, total_frames, target_frames
+            )
+
+            if total_frames >= target_frames:
+                logger.info("Reached target of %d frames. Stopping.", target_frames)
+                break
+
+        except Exception:
+            logger.exception("Failed to process session: %s", session_dir)
+
+    logger.info(
+        "Processed %d sessions, %d total frames.", len(results), total_frames
     )
     return results
 
@@ -338,19 +438,46 @@ def main():
         "--chunk-size",
         type=int,
         default=1000,
-        help="Number of sequences to process in RAM at a time (default: 1000)",
+        help="Sequences to process in RAM at a time (default: 1000)",
+    )
+    parser.add_argument(
+        "--filter-steering",
+        action="store_true",
+        help="Keep only sequences where steering != 0 (default: False)",
+    )
+    parser.add_argument(
+        "--target-frames",
+        type=int,
+        default=None,
+        help=(
+            "Target frame count. Stops after reaching target or exhausting "
+            "sessions. If not set, processes all sessions."
+        ),
     )
     args = parser.parse_args()
 
     if args.session:
         session_dir = args.captures_dir / args.session
         out_dir = args.output_dir / args.session
-        n = process_session(session_dir, out_dir, chunk_size=args.chunk_size)
+        n = process_session(
+            session_dir, out_dir, chunk_size=args.chunk_size,
+            filter_steering=args.filter_steering
+        )
         print(f"Done. {n} frames written to {out_dir}")
     else:
-        results = process_all_sessions(
-            args.captures_dir, args.output_dir, chunk_size=args.chunk_size
-        )
+        if args.target_frames:
+            results = process_sessions_until_target(
+                args.captures_dir, args.output_dir,
+                target_frames=args.target_frames,
+                chunk_size=args.chunk_size,
+                filter_steering=args.filter_steering
+            )
+        else:
+            results = process_all_sessions(
+                args.captures_dir, args.output_dir,
+                chunk_size=args.chunk_size,
+                filter_steering=args.filter_steering
+            )
         total = sum(results.values())
         print(f"Done. {len(results)} sessions, {total} total frames.")
 
