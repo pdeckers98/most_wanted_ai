@@ -61,6 +61,7 @@ See `.claude/docs/` for specialized guides:
 - **`SCREEN_CAPTURE.md`** - Frame capture, preprocessing, FPS/resolution
 - **`CONTROLLER_INPUT.md`** - Input logging, action mapping, synchronized recording
 - **`DATA_PREPROCESSING.md`** - Data cleaning, feature engineering, train/val split
+- **`CLOUD_SETUP.md`** - Cloud instance setup, SSH caching, pip installation, --break-system-packages
 - **`TRAINING.md`** - Cloud training setup, offline RL algorithm details, hyperparameters
 - **`INFERENCE.md`** - Model loading, real-time inference, GTX 1660 optimization
 
