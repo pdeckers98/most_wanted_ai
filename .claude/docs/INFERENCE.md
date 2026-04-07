@@ -4,74 +4,74 @@ Documentation for running the trained agent locally on the GTX 1660.
 
 ## Overview
 
-The inference pipeline runs alongside the game on the same machine. It captures
-frames via the screen capture pipeline, assembles a 4-frame stack, runs a
-forward pass through the trained ResNet-18 model, and outputs controller
-actions in real time.
+`src/agent/inference.py` captures live frames, runs a forward pass through the
+trained ResNet-18 policy, and writes actions to a **virtual Xbox controller**
+via vgamepad (ViGEm). The physical controller is read by the script; the game
+is driven entirely through the virtual device.
 
-**Performance target**: forward pass must complete in under 33ms (30fps budget).
-ResNet-18 on GTX 1660 runs a single forward pass in ~2-4ms — well within budget.
+**Performance target**: forward pass < 33 ms (30 fps budget).
+ResNet-18 on GTX 1660: ~2–4 ms per pass — well within budget.
 
-## Hardware Constraints
+## One-Time Setup
 
-- **VRAM**: 6GB shared between the game and the agent
-  - NFS Most Wanted 2005 uses ~0.8GB VRAM
-  - ResNet-18 in float32 weights: ~45MB
-  - Activations for a single (1, 4, 384, 480) batch: ~28MB
-  - **Total agent footprint**: well under 1GB — no quantisation needed for v1
-- **Quantisation**: not required for v1; revisit if VRAM becomes tight or
-  latency is too high
+Install [ViGEm Bus Driver](https://github.com/nefarius/ViGEmBus/releases) if
+not already present — vgamepad requires it.
+
+When you first run the script a new virtual controller appears in Windows.
+Open NFS MW's controller options and reassign controls to that device.
+This only needs to be done once.
+
+## Running
+
+```bash
+python src/agent/inference.py
+# Custom capture region or checkpoint:
+python src/agent/inference.py --right 1920 --bottom 1080 --checkpoint data/checkpoints/best_model.pt
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--checkpoint` | `data/checkpoints/best_model.pt` | Model to load |
+| `--left/top/right/bottom` | `0 0 1280 1024` | Screen capture region (pixels) |
+| `--fps` | `30` | Target inference FPS |
+| `--device` | `cuda` | `cuda` or `cpu` |
+
+## Controls
+
+| Input | Effect |
+|-------|--------|
+| **F7** | Toggle agent on / off |
+| **RB (hold)** | Override — passes your physical input through while held |
+
+Audio feedback on toggle: high beep (880 Hz) = on, low beep (440 Hz) = off.
+
+## Agent States
+
+| State | What the game receives |
+|-------|----------------------|
+| Agent OFF | Your physical controller (mirrored via vgamepad) |
+| Agent ON | Model predictions |
+| Agent ON + RB held | Your physical controller (override) |
 
 ## Model Loading
 
 ```python
-import torch
-from src.agent.model import ResNet18Policy
+from src.agent.model import RacingAgent
 
-model = ResNet18Policy()
-checkpoint = torch.load("data/checkpoints/best_model.pt", map_location="cuda")
-model.load_state_dict(checkpoint["model_state_dict"])
+model = RacingAgent(pretrained=False)
+ckpt = torch.load("data/checkpoints/best_model.pt", map_location="cuda")
+model.load_state_dict(ckpt["model_state_dict"])
 model.eval().cuda()
 ```
 
-## Real-Time Agent Loop
+Frame buffer: `collections.deque(maxlen=4)`. On startup the first frame is
+duplicated to fill the buffer before the model sees a real 4-frame stack.
 
-```
-[Screen capture: 4 most recent frames]
-    ↓ assemble (4, 384, 480) float32 tensor, normalise /255
-    ↓ model.forward(tensor.unsqueeze(0).cuda())
-    ↓ steer (float), throttle (binary), brake (binary)
-    ↓ send to virtual controller output
-```
+## VRAM Footprint
 
-Frame buffer: keep a `collections.deque(maxlen=4)` updated each frame.
-On the first 3 frames before the buffer is full, duplicate the earliest frame.
-
-## Integration with Screen Capture
-
-The inference loop reuses the same `FrameGrabber` and `preprocess_frame()`
-from `src/capture/`. It does **not** write frames to disk — capture is
-live only during inference.
-
-## Optimization
-
-For v1, no special optimisation is needed. If latency or VRAM becomes an issue
-in later versions:
-
-1. **torch.compile()** — drop-in speed improvement on PyTorch 2.x
-2. **float16 weights** — halves VRAM, minimal accuracy impact
-3. **ONNX + TensorRT** — maximum throughput, more complex pipeline
-
-## Testing & Validation
-
-Before running live against the game, validate offline:
-
-```bash
-python src/agent/evaluate.py --data-dir data/processed --checkpoint data/checkpoints/best_model.pt
-```
-
-Key metrics to check:
-- **Steer MAE** — mean absolute error on held-out validation frames
-- **Throttle/Brake accuracy** — binary classification accuracy
-- **Action distribution** — compare predicted vs expert histograms to check
-  for mode collapse (e.g. model always predicts steer=0)
+| Component | VRAM |
+|-----------|------|
+| NFS Most Wanted 2005 | ~0.8 GB |
+| ResNet-18 weights (float32) | ~45 MB |
+| Single forward pass activations | ~28 MB |
+| **Total** | **< 1 GB** — no quantisation needed |

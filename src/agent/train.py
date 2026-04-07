@@ -27,7 +27,8 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 import wandb
-from torchvision import models
+
+from src.agent.model import RacingAgent
 
 
 # ============================================================================
@@ -107,61 +108,6 @@ class RacingDataset(Dataset):
 
         action = torch.from_numpy(self.inputs[idx].copy()).float()
         return frame_stack, action
-
-
-# ============================================================================
-# Model Architecture
-# ============================================================================
-
-class RacingAgent(nn.Module):
-    """
-    ResNet-18 backbone with dual action heads.
-
-    Steer head: Linear(512, 1) → continuous steering [-1, 1]
-    Throttle/Brake head: Linear(512, 2) → binary [throttle, brake]
-
-    The first conv layer is modified to accept 4-channel greyscale input
-    instead of 3-channel RGB. Pretrained ImageNet weights are averaged
-    across the channel dimension to initialize the 4th channel.
-    """
-
-    def __init__(self):
-        super().__init__()
-
-        # Load pretrained ResNet-18
-        self.backbone = models.resnet18(pretrained=True)
-
-        # Replace first conv: 3 channels → 4 channels (greyscale stacks)
-        original_conv = self.backbone.conv1
-        self.backbone.conv1 = nn.Conv2d(
-            4, 64, kernel_size=7, stride=2, padding=3, bias=False
-        )
-
-        # Initialize 4th channel with average of pretrained weights
-        with torch.no_grad():
-            self.backbone.conv1.weight[:, :3, :, :] = original_conv.weight
-            self.backbone.conv1.weight[:, 3, :, :] = original_conv.weight.mean(dim=1)
-
-        # Remove original fully connected layer
-        self.backbone.fc = nn.Identity()
-
-        # Dual action heads
-        self.steer_head = nn.Linear(512, 1)
-        self.action_head = nn.Linear(512, 2)  # throttle, brake
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: (batch, 4, 384, 480) frame stacks
-
-        Returns:
-            steer: (batch, 1) continuous steering
-            actions: (batch, 2) throttle and brake (sigmoid for BCE)
-        """
-        features = self.backbone(x)  # (batch, 512)
-        steer = self.steer_head(features)  # (batch, 1)
-        actions = torch.sigmoid(self.action_head(features))  # (batch, 2)
-        return steer, actions
 
 
 # ============================================================================
@@ -384,7 +330,7 @@ def main():
     )
 
     # Initialize model
-    model = RacingAgent().to(device)
+    model = RacingAgent(pretrained=True).to(device)
     logger.info(
         f"Model parameters: {sum(p.numel() for p in model.parameters()):,}"
     )

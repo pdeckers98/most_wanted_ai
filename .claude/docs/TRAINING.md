@@ -31,6 +31,9 @@ drivable baseline quickly and acts as a reference point for offline RL gains.
 
 ## Model Architecture
 
+Class definition: `src/agent/model.py` — `RacingAgent`. Both `train.py` and
+`inference.py` import from there; the checkpoint is compatible with both.
+
 **Backbone**: ResNet-18
 
 - Pretrained on ImageNet (`torchvision.models.resnet18(pretrained=True)`)
