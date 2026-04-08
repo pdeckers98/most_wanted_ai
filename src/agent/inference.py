@@ -171,13 +171,13 @@ class InferenceAgent:
         with torch.no_grad():
             steer_t, actions_t = self._model(tensor)
 
-        steer = float(steer_t[0, 0].cpu())
-        steer = max(-1.0, min(1.0, steer))  # clamp to valid range
+        steer_raw = float(steer_t[0, 0].cpu())
+        steer = max(-1.0, min(1.0, steer_raw))  # clamp to valid range
 
         throttle = int(float(actions_t[0, 0].cpu()) > ACTION_THRESHOLD)
         brake = int(float(actions_t[0, 1].cpu()) > ACTION_THRESHOLD)
 
-        return steer, throttle, brake
+        return steer, steer_raw, throttle, brake
 
     def _send(self, steer: float, throttle: int, brake: int) -> None:
         """Write one action frame to the virtual gamepad."""
@@ -235,7 +235,7 @@ class InferenceAgent:
                     )
                 else:
                     # Agent: model drives
-                    steer, throttle, brake = self._predict(stack)
+                    steer, steer_raw, throttle, brake = self._predict(stack)
                     self._send(steer, throttle, brake)
 
                 # --- Periodic output print (every 3 seconds) ---------------
@@ -250,7 +250,7 @@ class InferenceAgent:
                     if active and not rb:
                         print(
                             f"[{state}] "
-                            f"steer={steer:+.3f}  "
+                            f"steer={steer:+.3f} (raw={steer_raw:+.3f})  "
                             f"throttle={throttle}  "
                             f"brake={brake}"
                         )
