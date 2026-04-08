@@ -388,7 +388,8 @@ def run_trial(
             best_val_loss = val_total
             epochs_no_improve = 0
             torch.save(model.state_dict(), best_model_path)
-            logger.info(f"  -> New best val_loss={best_val_loss:.4f} saved.")
+            logger.info(f"  -> New best val_loss={best_val_loss:.4f} saved."
+                        f" (checkpoint: {best_model_path})")
         else:
             epochs_no_improve += 1
             logger.info(
@@ -402,6 +403,20 @@ def run_trial(
                 )
                 stopped_epoch = epoch
                 break
+
+    # Upload best checkpoint to W&B Artifacts
+    artifact = wandb.Artifact(
+        name=run_name,
+        type='model',
+        metadata={
+            'best_val_loss': float(best_val_loss),
+            'stopped_epoch': stopped_epoch,
+            **hparams,
+        },
+    )
+    artifact.add_file(str(best_model_path))
+    wandb.log_artifact(artifact)
+    logger.info(f"  Artifact '{run_name}' uploaded to W&B.")
 
     wandb_url = wandb.run.get_url()
     wandb.finish()
@@ -436,7 +451,7 @@ def main():
     )
     parser.add_argument(
         '--output-dir', type=Path, default=Path('/mnt/data/checkpoints'),
-        help='Directory to save checkpoints and logs',
+        help='Directory to save checkpoints and logs (default: /mnt/data/checkpoints)',
     )
     parser.add_argument(
         '--epochs', type=int, default=50,
