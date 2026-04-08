@@ -172,7 +172,7 @@ class InferenceAgent:
             steer_t, actions_t = self._model(tensor)
 
         steer_raw = float(steer_t[0, 0].cpu())
-        steer = max(-1.0, min(1.0, steer_raw))  # clamp to valid range
+        steer = steer_raw  # bounded to (-1, 1) by tanh in model
 
         throttle = int(float(actions_t[0, 0].cpu()) > ACTION_THRESHOLD)
         brake = int(float(actions_t[0, 1].cpu()) > ACTION_THRESHOLD)

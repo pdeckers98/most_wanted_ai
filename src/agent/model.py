@@ -54,7 +54,7 @@ class RacingAgent(nn.Module):
             actions: (batch, 2) throttle and brake after sigmoid
         """
         features = self.backbone(x)            # (batch, 512)
-        steer = self.steer_head(features)      # (batch, 1)
+        steer = torch.tanh(self.steer_head(features))  # (batch, 1)
         actions = torch.sigmoid(               # (batch, 2)
             self.action_head(features)
         )
